@@ -22,18 +22,28 @@ char* generateFileName(char* src) {
     return dst;
 }
 
+void validation(char* fileName) {
+    FILE* inFile = fopen(fileName, "r");
+    printf("Validating file %s\n", fileName);
+    printFiles(inFile);
+    validator(inFile);
+}
+
 int main(int argc, char* argv[]) {
     if (argc != 2) {
         perror("Usage: defrag data-file");
         exit(1);
     }
 
+    //validation("datafile-frag.txt");
+    validation("datafile-frag-defrag.txt");
+
     FILE* inFile;
     FILE* outFile;
     char *outName = generateFileName(argv[1]);
 
     inFile = fopen(argv[1], "r");
-    outFile = fopen(outName, "w");
+    outFile = fopen(outName, "w+");
 
     if (inFile == NULL) {
         perror("Input file not exists.");

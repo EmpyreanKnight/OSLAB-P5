@@ -41,4 +41,8 @@ typedef struct {
 
 int defragmenter(FILE* inFile, FILE* outFile);
 
+void validator(FILE* inFile);
+
+void printFiles(FILE* inFile);
+
 #endif //P5_DEFRAG_H
