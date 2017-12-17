@@ -1,22 +1,24 @@
 #include "defrag.h"
 
-/**** These variables and constant are used to store general information of the target file system ****/
+/**** Following variables and constant are used to store general information of the target file system ****/
+// initial offset in byte of three regions
 size_t inodeInitial;
 size_t dataInitial;
 size_t swapInitial;
 
-superblock* superBlock;
-size_t blockSize = 512;
-size_t inodeSize = sizeof(inode); // size = 100
+superblock *superBlock; // pointer to super-block
+size_t blockSize = 512; // default block size, always true for boot and super block
+size_t inodeSize = 100; // i-node size, not use sizeof operator to avoid cross-platform problem
 
 // the following three indexes are relative to data region
+// used to trace the next location to be filled into output file
 int dataBlockIndex = 0;
 int indirectIndex = 0;
 int freeBlockIndex = 0;
 
-/**** The following functions are used for debug purpose, not necessarily as a part of defragmenter ****/
+/******* Following functions are used for debug purpose, not necessarily as a part of defragmenter *******/
 
-void dumpBootBlock(const char* bootBlock) {
+void dumpBootBlock(const char *bootBlock) {
     int i;
     printf("Boot Block Status:\n");
     for (i = 0; i < blockSize; i++) {
@@ -26,7 +28,7 @@ void dumpBootBlock(const char* bootBlock) {
     putchar('\n');
 }
 
-void dumpSuperBlock(superblock* superBlock) {
+void dumpSuperBlock(superblock *superBlock) {
     printf("Super Block Status:\n");
     printf("Size:         %d\n", superBlock->size);
     printf("Inode offset: %d\n", superBlock->inode_offset);
@@ -37,7 +39,7 @@ void dumpSuperBlock(superblock* superBlock) {
     printf("\n");
 }
 
-void dumpInode(inode* inode) {
+void dumpInode(inode *inode) {
     int i;
     printf("Inode Status:\n");
     printf("Next inode:   %d\n", inode->next_inode);
@@ -47,7 +49,7 @@ void dumpInode(inode* inode) {
     printf("User Id:      %d\n", inode->uid);
     printf("Group Id:     %d\n", inode->gid);
     printf("Change Time:  %d\n", inode->ctime);
-    printf("Mordify Time: %d\n", inode->mtime);
+    printf("Modify Time:  %d\n", inode->mtime);
     printf("Access Time:  %d\n", inode->atime);
     printf("I2 Pointer:   %d\n", inode->i2block);
     printf("I3 Pointer:   %d\n", inode->i3block);
@@ -64,7 +66,7 @@ void dumpInode(inode* inode) {
     printf("\n");
 }
 
-void dumpDataBlock(const char* blk) {
+void dumpDataBlock(const char *blk) {
     int i;
     printf("Data Block Content:\n");
     for (i = 0; i < blockSize; i++) {
@@ -75,7 +77,7 @@ void dumpDataBlock(const char* blk) {
 }
 
 
-void dumpIndexBlock(const int* idx) {
+void dumpIndexBlock(const int *idx) {
     int i;
     printf("Index Block Content:\n");
     for (i = 0; i < (blockSize / sizeof(int)); i++) {
@@ -85,10 +87,10 @@ void dumpIndexBlock(const int* idx) {
     putchar('\n');
 }
 
-void dumpInodeFreeList(FILE* in) {
+void dumpInodeFreeList(FILE *in) {
     printf("Inode Free List:\n");
 
-    inode* next = malloc(inodeSize);
+    inode *next = malloc(inodeSize);
     fseek(in, inodeInitial + superBlock->free_inode * inodeSize, SEEK_SET);
     fread(next, 1, inodeSize, in);
     while (next->next_inode >= 0) {
@@ -101,28 +103,34 @@ void dumpInodeFreeList(FILE* in) {
     free(next);
 }
 
-void dumpDataFreeList(FILE* in) {
+void dumpDataFreeList(FILE *in) {
     printf("Data Free List:\n");
-    printf("Head: %d\n", superBlock->free_iblock);
+    printf("Head index: %d\n", superBlock->free_iblock);
 
-    void* next = malloc(blockSize);
+    void *next = malloc(blockSize);
     fseek(in, dataInitial + superBlock->free_iblock * blockSize, SEEK_SET);
     fread(next, blockSize, 1, in);
-    int value = *((int*)next);
+    int value = *((int *) next);
     while (value >= 0) {
         fseek(in, dataInitial + value * blockSize, SEEK_SET);
         fread(next, blockSize, 1, in);
         printf("Next index: %d\n", value);
-        value = *((int*)next);
+        value = *((int *) next);
     }
     printf("Next index: %d\n", value);
 
     free(next);
 }
 
-void validator(FILE* inFile) {
+/**
+ * This function print boot, super and all inode block content
+ * Also print full free data and inode list
+ * If the result is legal, at least the format of input file image is correct
+ * @param inFile Pointer to a file need to be validated
+ */
+void validator(FILE *inFile) {
     rewind(inFile);
-    void* buffer = malloc(blockSize);
+    void *buffer = malloc(blockSize);
 
     // dump boot block
     fread(buffer, blockSize, 1, inFile);
@@ -132,12 +140,12 @@ void validator(FILE* inFile) {
     superBlock = malloc(blockSize);
     fread(superBlock, blockSize, 1, inFile);
     dumpSuperBlock(superBlock);
-    blockSize = (size_t)superBlock->size;
+    blockSize = (size_t) superBlock->size;
 
     // calculate initial address of three areas
     inodeInitial = (2 + superBlock->inode_offset) * blockSize;
-    dataInitial  = (2 + superBlock->data_offset) * blockSize;
-    swapInitial  = (2 + superBlock->swap_offset) * blockSize;
+    dataInitial = (2 + superBlock->data_offset) * blockSize;
+    swapInitial = (2 + superBlock->swap_offset) * blockSize;
 
     // dump free lists
     dumpInodeFreeList(inFile);
@@ -146,7 +154,7 @@ void validator(FILE* inFile) {
     // dump all inodes
     printf("\nInode List:\n");
     int i;
-    inode* inodeBuffer = malloc(inodeSize);
+    inode *inodeBuffer = malloc(inodeSize);
     size_t inodeCount = (superBlock->data_offset - superBlock->inode_offset) * blockSize / inodeSize;
     for (i = 0; i < inodeCount; i++) {
         fseek(inFile, inodeInitial + i * inodeSize, SEEK_SET);
@@ -159,39 +167,46 @@ void validator(FILE* inFile) {
     free(superBlock);
 }
 
-void printFiles(FILE* inFile) {
+/**
+ * This function print separated files from input file image
+ * If the file image is correct, it can be normally open in Ubuntu system
+ * Note that this function **cannot** handle files with second or third indirect blocks for convenience
+ * @param inFile Pointer to a input file image
+ */
+void printFiles(FILE *inFile) {
     rewind(inFile);
-    void* buffer = malloc(blockSize);
+    void *buffer = malloc(blockSize);
 
-    // dump boot block
+    // read boot block
     fread(buffer, blockSize, 1, inFile);
 
-    // dump super block
+    // read super block
     superBlock = malloc(blockSize);
     fread(superBlock, blockSize, 1, inFile);
-    blockSize = (size_t)superBlock->size;
+    blockSize = (size_t) superBlock->size;
 
     // calculate initial address of three areas
     inodeInitial = (2 + superBlock->inode_offset) * blockSize;
-    dataInitial  = (2 + superBlock->data_offset) * blockSize;
-    swapInitial  = (2 + superBlock->swap_offset) * blockSize;
+    dataInitial = (2 + superBlock->data_offset) * blockSize;
+    swapInitial = (2 + superBlock->swap_offset) * blockSize;
 
-    // dump free lists
+    // dump inode free lists
     dumpInodeFreeList(inFile);
 
     int i, j, k;
-    inode* inodeBuffer = malloc(inodeSize);
+    inode *inodeBuffer = malloc(inodeSize);
     size_t inodeCount = (superBlock->data_offset - superBlock->inode_offset) * blockSize / inodeSize;
-    FILE* outFile;
-    char name[20];
-    int* inBuffer = malloc(blockSize);
+    FILE *outFile;
+    char name[50];
+    int *inBuffer = malloc(blockSize);
     for (i = 0; i < inodeCount; i++) {
         fseek(inFile, inodeInitial + i * inodeSize, SEEK_SET);
         fread(inodeBuffer, 1, inodeSize, inFile);
         dumpInode(inodeBuffer);
+        mkdir("unpacked", S_IRWXU);
         if (inodeBuffer->nlink > 0) {
-            sprintf(name, "file-%d", i);
-            outFile = fopen(name, "w");
+            sprintf(name, "unpacked/file-%d", i);
+            outFile = fopen(name, "wt");
             size_t dataCount = ((inodeBuffer->size - 1) / blockSize) + 1;
             for (j = 0; j < N_DBLOCKS; j++) {
                 if (dataCount <= 0) {
@@ -247,12 +262,12 @@ void printFiles(FILE* inFile) {
  * Also note that superblock must be initialized before calling it
  * @param out The output file pointer
  */
-void copyInodes(FILE* in, FILE* out) {
+void copyInodes(FILE *in, FILE *out) {
     int i;
-    void* buffer = malloc(blockSize);
+    void *buffer = malloc(blockSize);
 
     // copy origin superblock as placeholder
-    fwrite(buffer, blockSize, 1, out);
+    fwrite(superBlock, blockSize, 1, out);
 
     // copy origin inodes to output file, also as placeholder
     for (i = superBlock->inode_offset; i < superBlock->data_offset; i++) {
@@ -274,7 +289,7 @@ void copyInodes(FILE* in, FILE* out) {
 int calcDataBlocks(FILE *inFile, size_t inodeCount) {
     int i;
     int result = 0;
-    inode* inodeBuffer = malloc(inodeSize);
+    inode *inodeBuffer = malloc(inodeSize);
 
     for (i = 0; i < inodeCount; i++) {
         fseek(inFile, inodeInitial + i * inodeSize, SEEK_SET);
@@ -294,8 +309,8 @@ int calcDataBlocks(FILE *inFile, size_t inodeCount) {
  * @param inFile The input file pointer
  * @param outFile The output file pointer
  */
-void writeFreeDataBlock(FILE* inFile, FILE* outFile) {
-    size_t cnt = 0;
+void writeFreeDataBlock(FILE *inFile, FILE *outFile) {
+    size_t cnt = 0; // number of data region free blocks
 
     // TODO: weight read free list for space, or allocate a data-region-sized array for time?
 
@@ -303,12 +318,13 @@ void writeFreeDataBlock(FILE* inFile, FILE* outFile) {
     int i, next;
     fseek(inFile, dataInitial + superBlock->free_iblock * blockSize, SEEK_SET);
     fread(&next, 1, sizeof(int), inFile);
+    cnt++;
     while (next >= 0) {
         fseek(inFile, dataInitial + next * blockSize, SEEK_SET);
         fread(&next, 1, sizeof(int), inFile);
         cnt++;
     }
-    int* arr = malloc(sizeof(int) * (cnt + 1));
+    int *arr = malloc(sizeof(int) * (cnt + 1));
 
     // read inFile free block indexes
     cnt = 0;
@@ -325,20 +341,18 @@ void writeFreeDataBlock(FILE* inFile, FILE* outFile) {
     freeBlockIndex = indirectIndex;
     superBlock->free_iblock = freeBlockIndex;
     fseek(outFile, dataInitial + freeBlockIndex * blockSize, SEEK_SET);
-    void* buffer = malloc(blockSize);
+    void *buffer = malloc(blockSize);
     memset(buffer, 0, blockSize);
     for (i = 0; i < cnt - 1; i++) {
         fseek(inFile, dataInitial + arr[i] * blockSize, SEEK_SET);
-        //printf("Migrate free block: %d\n", arr[i]);
         fread(buffer, blockSize, 1, inFile);
-        *(int*)buffer = ++freeBlockIndex;
-        //sprintf((char*)(buffer + 4), "FREE DATA REGION");
+        *(int *) buffer = ++freeBlockIndex;
         fwrite(buffer, blockSize, 1, outFile);
     }
 
     fseek(inFile, dataInitial + arr[cnt - 1] * blockSize, SEEK_SET);
     fread(buffer, blockSize, 1, inFile);
-    *(int*)buffer = -1;
+    *(int *) buffer = -1;
     fwrite(buffer, blockSize, 1, outFile);
     freeBlockIndex++;
 
@@ -356,19 +370,18 @@ void writeSwapRegion(FILE *inFile, FILE *outFile) {
         exit(1);
     }
 
-    void* buffer = malloc(blockSize);
+    void *buffer = malloc(blockSize);
     fseek(inFile, swapInitial, SEEK_SET);
-    while(fread(buffer, blockSize, 1, inFile)) {
-        //sprintf((char*)buffer, "SWAP REGION");
+    while (fread(buffer, blockSize, 1, inFile)) {
         fwrite(buffer, blockSize, 1, outFile);
     }
 
     free(buffer);
 }
 
-void writeIndirectBlock(int* blk, FILE* inFile, FILE* outFile, size_t * dataCount) {
+void writeIndirectBlock(int *blk, FILE *inFile, FILE *outFile, size_t *dataCount) {
     int i;
-    void* buffer = malloc(blockSize);
+    void *buffer = malloc(blockSize);
     for (i = 0; i < (blockSize / sizeof(int)); i++) {
         if (*dataCount <= 0) {
             break;
@@ -386,7 +399,7 @@ void writeIndirectBlock(int* blk, FILE* inFile, FILE* outFile, size_t * dataCoun
 
 void writeSingleFile(inode *inode, FILE *inFile, FILE *outFile) {
     int i;
-    void* buffer = malloc(blockSize);
+    void *buffer = malloc(blockSize);
     size_t dataCount = ((inode->size - 1) / blockSize) + 1;
 
     // write direct blocks
@@ -433,9 +446,9 @@ void writeSingleFile(inode *inode, FILE *inFile, FILE *outFile) {
     free(buffer);
 }
 
-void writeAllFiles(FILE* inFile, FILE* outFile, size_t inodeCount) {
+void writeAllFiles(FILE *inFile, FILE *outFile, size_t inodeCount) {
     int i;
-    inode* inodeBuffer = malloc(inodeSize);
+    inode *inodeBuffer = malloc(inodeSize);
 
     for (i = 0; i < inodeCount; i++) {
         fseek(inFile, inodeInitial + i * inodeSize, SEEK_SET);
@@ -452,10 +465,10 @@ void writeAllFiles(FILE* inFile, FILE* outFile, size_t inodeCount) {
     free(inodeBuffer);
 }
 
-void dataRegionMentor(FILE* inFile, FILE* outFile) {
+void dataRegionMender(FILE *inFile, FILE *outFile) {
     int i;
     int dataRegion = superBlock->swap_offset - superBlock->data_offset;
-    void* buffer = malloc(blockSize);
+    void *buffer = malloc(blockSize);
 
     // 10135-10242
     for (i = freeBlockIndex; i < dataRegion; i++) {
@@ -464,10 +477,12 @@ void dataRegionMentor(FILE* inFile, FILE* outFile) {
         fseek(outFile, dataInitial + i * blockSize, SEEK_SET);
         fwrite(buffer, blockSize, 1, outFile);
     }
+
+    free(buffer);
 }
 
-int defragmenter(FILE* inFile, FILE* outFile) {
-    void* buffer;
+int defragmenter(FILE *inFile, FILE *outFile) {
+    void *buffer;
     buffer = malloc(blockSize);
 
     // simply copy boot block
@@ -478,16 +493,16 @@ int defragmenter(FILE* inFile, FILE* outFile) {
     // read in the super block
     superBlock = malloc(blockSize);
     fread(superBlock, blockSize, 1, inFile);
-    //dumpSuperBlock(superBlock);
-    blockSize = (size_t)superBlock->size;
+    dumpSuperBlock(superBlock);
+    blockSize = (size_t) superBlock->size;
 
     // calculate initial address of three regions
     inodeInitial = 1024 + superBlock->inode_offset * blockSize;
-    dataInitial  = 1024 + superBlock->data_offset  * blockSize;
-    swapInitial  = 1024 + superBlock->swap_offset  * blockSize;
+    dataInitial = 1024 + superBlock->data_offset * blockSize;
+    swapInitial = 1024 + superBlock->swap_offset * blockSize;
 
     //dumpInodeFreeList(inFile);
-    dumpDataFreeList(inFile);
+    //dumpDataFreeList(inFile);
 
     // hold place for superblock and inodes
     copyInodes(inFile, outFile);
@@ -499,7 +514,7 @@ int defragmenter(FILE* inFile, FILE* outFile) {
     writeAllFiles(inFile, outFile, inodeCount);
 
     writeFreeDataBlock(inFile, outFile);
-    dataRegionMentor(inFile, outFile);
+    dataRegionMender(inFile, outFile);
 
     fseek(outFile, 512, SEEK_SET);
     fwrite(superBlock, 1, 512, outFile);

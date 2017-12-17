@@ -27,6 +27,7 @@ void validation(char* fileName) {
     printf("Validating file %s\n", fileName);
     printFiles(inFile);
     validator(inFile);
+    exit(0);
 }
 
 int main(int argc, char* argv[]) {
@@ -35,8 +36,7 @@ int main(int argc, char* argv[]) {
         exit(1);
     }
 
-    //validation("datafile-frag.txt");
-    validation("datafile-frag-defrag.txt");
+    validation(argv[1]);
 
     FILE* inFile;
     FILE* outFile;
