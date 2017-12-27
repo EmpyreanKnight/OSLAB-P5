@@ -6,6 +6,12 @@
 #include <string.h>
 #include <sys/stat.h>
 
+extern int d_error;
+#define ERROR_ALL_GREEN             0
+#define ERROR_DATA_BLOCK_LOST       1
+#define ERROR_CORRUPTED_FREE_DATA   2
+#define ERROR_CORRUPTED_SWAP_REGION 4
+
 typedef struct {
     int size;         /* size of blocks in bytes */
     int inode_offset; /* offset of inode region in blocks */

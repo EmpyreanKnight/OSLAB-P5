@@ -1,6 +1,8 @@
 #include "defrag.h"
 
 /**** Following variables and constant are used to store general information of the target file system ****/
+int d_error; // error type descriptor, use bitwise operation
+
 // initial offset in byte of three regions
 size_t inodeInitial;
 size_t dataInitial;
@@ -13,7 +15,6 @@ size_t inodeSize = 100; // i-node size, not use sizeof operator to avoid cross-p
 // the following three indexes are relative to data region
 // used to trace the next location to be filled into output file
 int dataBlockIndex = 0;
-int indirectIndex = 0;
 int freeBlockIndex = 0;
 
 /******* Following functions are used for debug purpose, not necessarily as a part of defragmenter *******/
@@ -64,27 +65,6 @@ void dumpInode(inode *inode) {
     }
     printf("\n");
     printf("\n");
-}
-
-void dumpDataBlock(const char *blk) {
-    int i;
-    printf("Data Block Content:\n");
-    for (i = 0; i < blockSize; i++) {
-        printf("%c", *(blk + i));
-    }
-    putchar('\n');
-    putchar('\n');
-}
-
-
-void dumpIndexBlock(const int *idx) {
-    int i;
-    printf("Index Block Content:\n");
-    for (i = 0; i < (blockSize / sizeof(int)); i++) {
-        printf("%d ", *(idx + i));
-    }
-    putchar('\n');
-    putchar('\n');
 }
 
 void dumpInodeFreeList(FILE *in) {
@@ -169,7 +149,8 @@ void validator(FILE *inFile) {
 
 /**
  * This function print separated files from input file image
- * If the file image is correct, it can be normally open in Ubuntu system
+ * Output files will be placed in sub-folder ./unpacked of execution directory
+ * If the input file image is correct, output files can be normally open in Ubuntu system
  * Note that this function **cannot** handle files with second or third indirect blocks for convenience
  * @param inFile Pointer to a input file image
  */
@@ -281,29 +262,6 @@ void copyInodes(FILE *in, FILE *out) {
 }
 
 /**
- * This function calculate how many data blocks are used to store files
- * @param inFile The input file pointer
- * @param inodeCount The amount of inodes in input file image
- * @return The amount of used data blocks (exclude indirect blocks)
- */
-int calcDataBlocks(FILE *inFile, size_t inodeCount) {
-    int i;
-    int result = 0;
-    inode *inodeBuffer = malloc(inodeSize);
-
-    for (i = 0; i < inodeCount; i++) {
-        fseek(inFile, inodeInitial + i * inodeSize, SEEK_SET);
-        fread(inodeBuffer, 1, inodeSize, inFile);
-        if (inodeBuffer->nlink > 0) {
-            result += ((inodeBuffer->size - 1) / blockSize) + 1;
-        }
-    }
-
-    free(inodeBuffer);
-    return result;
-}
-
-/**
  * This function sort free data block indexes,
  * and write them in ascending order into output file
  * @param inFile The input file pointer
@@ -311,8 +269,6 @@ int calcDataBlocks(FILE *inFile, size_t inodeCount) {
  */
 void writeFreeDataBlock(FILE *inFile, FILE *outFile) {
     size_t cnt = 0; // number of data region free blocks
-
-    // TODO: weight read free list for space, or allocate a data-region-sized array for time?
 
     // count free data block number
     int i, next;
@@ -338,7 +294,7 @@ void writeFreeDataBlock(FILE *inFile, FILE *outFile) {
     }
 
     // write free blocks to output file in ascending order
-    freeBlockIndex = indirectIndex;
+    freeBlockIndex = dataBlockIndex;
     superBlock->free_iblock = freeBlockIndex;
     fseek(outFile, dataInitial + freeBlockIndex * blockSize, SEEK_SET);
     void *buffer = malloc(blockSize);
@@ -361,13 +317,12 @@ void writeFreeDataBlock(FILE *inFile, FILE *outFile) {
 }
 
 /**
- * This function copy swap region from input to output file
+ * This function simply copy swap region from input to output file
  */
 void writeSwapRegion(FILE *inFile, FILE *outFile) {
-    if (fseek(outFile, swapInitial, SEEK_SET)) {
-        // TODO: change to return error message
-        perror("Corrupted File System!");
-        exit(1);
+    if (fseek(outFile, swapInitial, SEEK_SET)) { // cannot direct to swap region
+        d_error |= ERROR_CORRUPTED_SWAP_REGION;
+        return;
     }
 
     void *buffer = malloc(blockSize);
@@ -379,6 +334,11 @@ void writeSwapRegion(FILE *inFile, FILE *outFile) {
     free(buffer);
 }
 
+/**
+ * This function read a I1 block, and print all blocks indexed by it to output file
+ * The I1 block indicated by blk will be updated
+ * Also decrease dataCount, which count for remaining data blocks for this file
+ */
 void writeIndirectBlock(int *blk, FILE *inFile, FILE *outFile, size_t *dataCount) {
     int i;
     void *buffer = malloc(blockSize);
@@ -397,6 +357,56 @@ void writeIndirectBlock(int *blk, FILE *inFile, FILE *outFile, size_t *dataCount
     free(buffer);
 }
 
+/**
+ * This function read a I2 block, and print all blocks indexed by it to output file
+ * The I2 block indicated by blk will be updated
+ * Also decrease dataCount, which count for remaining data blocks for this file
+ */
+void writeSecondIndirectBlock(int *blk, FILE *inFile, FILE *outFile, size_t *dataCount) {
+    int i;
+    void* buffer = malloc(blockSize);
+    for (i = 0; i < (blockSize / sizeof(int)); i++) {
+        if (*dataCount <= 0) {
+            break;
+        }
+
+        fseek(inFile, dataInitial + blk[i] * blockSize, SEEK_SET);
+        fread(buffer, blockSize, 1, inFile);
+        blk[i] = dataBlockIndex++;
+        writeIndirectBlock(blk, inFile, outFile, dataCount);
+        fseek(outFile, dataInitial + blk[i] * blockSize, SEEK_SET);
+        fwrite(buffer, blockSize, 1, outFile);
+    }
+    free(buffer);
+}
+
+/**
+ * This function read a I3 block, and print all blocks indexed by it to output file
+ * The I3 block indicated by blk will be updated
+ * Also decrease dataCount, which count for remaining data blocks for this file
+ */
+void writeThirdIndirectBlock(int *blk, FILE *inFile, FILE *outFile, size_t *dataCount) {
+    int i;
+    void* buffer = malloc(blockSize);
+    for (i = 0; i < (blockSize / sizeof(int)); i++) {
+        if (*dataCount <= 0) {
+            break;
+        }
+
+        fseek(inFile, dataInitial + blk[i] * blockSize, SEEK_SET);
+        fread(buffer, blockSize, 1, inFile);
+        blk[i] = dataBlockIndex++;
+        writeSecondIndirectBlock(blk, inFile, outFile, dataCount);
+        fseek(outFile, dataInitial + blk[i] * blockSize, SEEK_SET);
+        fwrite(buffer, blockSize, 1, outFile);
+    }
+    free(buffer);
+}
+
+/**
+ * This function read a inode, and print all blocks of this file to output
+ * Also modify pointer fields in input inode
+ */
 void writeSingleFile(inode *inode, FILE *inFile, FILE *outFile) {
     int i;
     void *buffer = malloc(blockSize);
@@ -423,29 +433,36 @@ void writeSingleFile(inode *inode, FILE *inFile, FILE *outFile) {
         fseek(inFile, dataInitial + inode->iblocks[i] * blockSize, SEEK_SET);
         fread(buffer, blockSize, 1, inFile);
         //dumpIndexBlock(buffer);
-        inode->iblocks[i] = indirectIndex++;
+        inode->iblocks[i] = dataBlockIndex++;
         writeIndirectBlock(buffer, inFile, outFile, &dataCount);
         fseek(outFile, dataInitial + inode->iblocks[i] * blockSize, SEEK_SET);
         fwrite(buffer, blockSize, 1, outFile);
     }
 
     if (dataCount > 0) {
+        d_error |= ERROR_DATA_BLOCK_LOST;
         perror("Not all blocks written!");
     }
 
-    // TODO
     if (inode->i2block != 0) {
-        perror("I2 not implemented!");
+        fseek(inFile, dataInitial + inode->i2block, SEEK_SET);
+        fread(buffer, blockSize, 1, inFile);
+        writeSecondIndirectBlock(buffer, inFile, outFile, &dataCount);
     }
 
-    // TODO
     if (inode->i3block != 0) {
-        perror("I3 not implemented!");
+        fseek(inFile, dataInitial + inode->i3block, SEEK_SET);
+        fread(buffer, blockSize, 1, inFile);
+        writeThirdIndirectBlock(buffer, inFile, outFile, &dataCount);
     }
 
     free(buffer);
 }
 
+/**
+ * This function write all files into output file in defragmented manner one by one
+ * Note the inodeCount should be given as argument
+ */
 void writeAllFiles(FILE *inFile, FILE *outFile, size_t inodeCount) {
     int i;
     inode *inodeBuffer = malloc(inodeSize);
@@ -465,13 +482,19 @@ void writeAllFiles(FILE *inFile, FILE *outFile, size_t inodeCount) {
     free(inodeBuffer);
 }
 
+/**
+ * This function works as a remedy for sample file error
+ * Specifically, it copy all blocks remained (not data block nor free block) into output file
+ * If this function is called, an error tag will be set
+ */
 void dataRegionMender(FILE *inFile, FILE *outFile) {
     int i;
     int dataRegion = superBlock->swap_offset - superBlock->data_offset;
     void *buffer = malloc(blockSize);
 
-    // 10135-10242
+    // 10135-10238 in test sample
     for (i = freeBlockIndex; i < dataRegion; i++) {
+        d_error |= ERROR_CORRUPTED_FREE_DATA;
         fseek(inFile, dataInitial + i * blockSize, SEEK_SET);
         fread(buffer, blockSize, 1, inFile);
         fseek(outFile, dataInitial + i * blockSize, SEEK_SET);
@@ -483,6 +506,7 @@ void dataRegionMender(FILE *inFile, FILE *outFile) {
 
 int defragmenter(FILE *inFile, FILE *outFile) {
     void *buffer;
+    d_error = ERROR_ALL_GREEN;
     buffer = malloc(blockSize);
 
     // simply copy boot block
@@ -510,7 +534,6 @@ int defragmenter(FILE *inFile, FILE *outFile) {
     // read used inode and write data blocks
     size_t inodeCount = (superBlock->data_offset - superBlock->inode_offset) * blockSize / inodeSize;
     dataBlockIndex = 0;
-    indirectIndex = calcDataBlocks(inFile, inodeCount);
     writeAllFiles(inFile, outFile, inodeCount);
 
     writeFreeDataBlock(inFile, outFile);
@@ -523,5 +546,6 @@ int defragmenter(FILE *inFile, FILE *outFile) {
 
     free(buffer);
     free(superBlock);
-    return 0;
+
+    return (d_error == ERROR_ALL_GREEN);
 }

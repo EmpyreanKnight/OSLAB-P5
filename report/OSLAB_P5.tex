@@ -1,0 +1,82 @@
+\documentclass{article}
+\usepackage{listings}
+\usepackage{fullpage}
+\usepackage{courier}
+\usepackage{xcolor}
+\title{OSLAB Project V Report}
+\author{
+	Yao Shunyu\\
+	10152130134
+	\and
+	Lv Yingzhe\\
+	10152130255
+}
+
+\definecolor{shadecolor}{rgb}{0.95,0.95,0.95}
+\lstset{basicstyle=\ttfamily, tabsize=2, backgroundcolor=\color{shadecolor}}
+\newcommand{\inline}[1]{\colorbox{shadecolor}{\lstinline{#1}}}
+
+\begin{document}
+\maketitle
+	
+\section{Introduction}
+In this project, we are required to design a file system defragmenter, which improves file system performance by laying out all the blocks of a file in sequential order on disk. Our defragmenter is for a quiet ancient unix-liked file system, called AFS (Andrew File System). By completing this project, we got a sense of file system structure and memory-leak-free programming technique.
+	
+\section{Usage}
+\subsection{Defragmenter}
+Our submit version only contains defragmenter source files, you should build execution first, just type the following commands in your terminal:
+\begin{lstlisting}
+	% cd <src folder>
+	% make
+\end{lstlisting}
+After that, you will get a executable file called \inline{defrag}, you can call it like this:
+\begin{lstlisting}
+	% ./defrag <fragmented disk file>
+\end{lstlisting}
+Our output file will be named with \inline{-defrag} suffix concatenated after the input file name but before its extension name (if any).
+\subsection{Validation}
+If you want to verify the correctness of our output result, we also provide validation program. What you only need to do is modify the \textbf{50th line} in \inline{main.c}: 
+\begin{center}
+	delete \inline{//} before \inline{validation}
+\end{center} 
+After that, save the source file, re-build and execute new \texttt{defrag} program, this time \textbf{with the file name need to be verified as argument}. After that, you'll get all files in this file image in \inline{./unpacked} folder, and get debug infos from your terminal.
+\newpage
+
+\section{Algorithm}
+When considering how to reformat data blocks, we figured out two way to complete it:
+\begin{itemize}
+	\item \textbf{File Sequential Method}:\\
+	For a single file, place its data and indirect blocks continuously and in then order of sequentially reading. All files are placed one by one from the beginning of data region.
+	\item \textbf{Two Region Method}:\\
+	Place all data blocks of files (in sequentially reading order and continuously) one by one from the beginning of data region, namely \textbf{data block region}. Then put indirect blocks of all files (also in sequentially reading order and continuously) one by one after data block region, namely \textbf{indirect block region}.
+\end{itemize}
+As a result, we choose to use \textbf{Two Region Method}, the analysis will be shown in the following two subsections.
+
+\subsection{File Sequential Method}
+Under this method, both \textbf{sequential and small file random access speed} will be improved, but \textbf{random access speed for big files} is bad. For sequential reading, since the next block need to read always under the magnetic head, minimal movement is required, which means the sequential access time is minimized. For random access in small files, this method also performs well. If the block need to access is indexed by a direct block, magnetic head only need to skip over a few data blocks, no seeking time in most cases. If the block is indexed by a first indirect block, magnetic skip over a few data block to access I1 block, then skip over at most $\frac{512}{4}=128$ blocks to access the data block. However, for blocks indexed by a second indirect block, such number is ${\frac{512}{4}}^2=16384$, for third indirect indexed block, ${\frac{512}{4}}^3=2097152$, not to mention the time to find I2 or I3 block (other indirect blocks needed are accessed half-way), that's a huge cost!
+
+\subsection{Two Region Method}	
+This method is just reversed, \textbf{big file random access speed} will be improved, but \textbf{sequential and small file random access speed} is slow. Considering the same example in the previous subsection, for accessing a third indirect indexed block, after read I3 block, our pity magnetic head need only to across a few indirect blocks to access I3 block, then I2 block, then I1 block, then wired back to data block region for data block. However, for direct block or first indirect indexed block, and for sequential reading, magnetic head also need to wire back and forth unnecessarily, which makes it slower that our first method.
+
+\subsection{Overall Algorithm}
+Considering the great portion takes up by small files in most cases, we think reduce small file access speed is more important than big ones. Therefore, we choose \textbf{file sequential method} as our defragment algorithm. After choosing reformat method, we can describe our overall algorithm now. We execute the following procedures respectively:
+\begin{enumerate}
+	\item Copy boot block into output file
+	\item Read super block from input file and calculate necessary values
+	\item Hold place for super block and i-nodes (they need to be modified so cannot write right away)
+	\item Read i-node and data blocks of a file one by one, then reformat and write into output file, also modify i-node and write back
+	\item Read data free list, sort its index, then write back free data blocks (we copy free block content from input file for the convenience of test, although not necessary)
+	\item Copy swap region into output file
+\end{enumerate}
+We guarantee that our output file is correct if the input file has correct file structure.
+
+\section{About the Sample File}
+We found that the sample file system given in specification has some error, decided to list them down and give our remedies.
+
+\subsection{Missed Blocks in Data Region}
+In the sample file, the swap region offset is $10243$ and data region offset is $4$, so the data region should contains $10239$ blocks. However, data blocks indexed between $10135$ to $10238$ are not data blocks used by files nor free block recorded in free-list. To make output file completion, we simply copy these blocks into output file (we don't add them into free list since it may affect validation by TA).
+
+\subsection{Total Block Number}
+After make up lost blocks, we found another problem, the file size is not correct. Since the swap region offset is $10243$, this file must contains $2+10243=10245$ blocks, say $10245*512B=5245440B$, but input file only $5243392B$, in other word, $4$ blocks are mysteriously lost. The only thing we can do is modify our remedy, let it copy more file blocks until data region ends (even origin file is shorter, our remedy can copy obsolete blocks instead).
+
+\end{document}
