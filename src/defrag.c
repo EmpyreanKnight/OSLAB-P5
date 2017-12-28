@@ -507,18 +507,20 @@ void dataRegionMender(FILE *inFile, FILE *outFile) {
 int defragmenter(FILE *inFile, FILE *outFile) {
     void *buffer;
     d_error = ERROR_ALL_GREEN;
-    buffer = malloc(blockSize);
+    buffer = malloc(DEFAULT_BLOCK_SIZE);
 
     // simply copy boot block
-    fread(buffer, blockSize, 1, inFile);
+    fread(buffer, DEFAULT_BLOCK_SIZE, 1, inFile);
     //dumpBootBlock(buffer);
-    fwrite(buffer, blockSize, 1, outFile);
+    fwrite(buffer, DEFAULT_BLOCK_SIZE, 1, outFile);
 
     // read in the super block
-    superBlock = malloc(blockSize);
-    fread(superBlock, blockSize, 1, inFile);
+    fread(buffer, DEFAULT_BLOCK_SIZE, 1, inFile);
+    superBlock = buffer;
     dumpSuperBlock(superBlock);
+
     blockSize = (size_t) superBlock->size;
+    buffer = malloc(blockSize);
 
     // calculate initial address of three regions
     inodeInitial = 1024 + superBlock->inode_offset * blockSize;
@@ -540,7 +542,7 @@ int defragmenter(FILE *inFile, FILE *outFile) {
     dataRegionMender(inFile, outFile);
 
     fseek(outFile, 512, SEEK_SET);
-    fwrite(superBlock, 1, 512, outFile);
+    fwrite(superBlock, 1, DEFAULT_BLOCK_SIZE, outFile);
 
     writeSwapRegion(inFile, outFile);
 
