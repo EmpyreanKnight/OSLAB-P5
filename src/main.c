@@ -47,7 +47,7 @@ int main(int argc, char* argv[]) {
         exit(1);
     }
 
-    validation(inFile);
+    //validation(inFile);
 
     FILE* outFile;
     char *outName = generateFileName(argv[1]);
@@ -62,6 +62,8 @@ int main(int argc, char* argv[]) {
         exit(1);
     }
 
+	printf("Defragmentation Succeed!\n");
+	printf("Output file name: %s\n", outName);
     free(outName);
     fclose(inFile);
     fclose(outFile);
